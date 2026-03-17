@@ -1,0 +1,382 @@
+================================================================================
+           PHÂN TÍCH LUỒNG CÁC HÀM - license_validator.py
+================================================================================
+
+MỤC ĐÍCH TỔNG QUAN:
+  File này được nhúng vào app chính để quản lý và xác thực license key.
+  Hỗ trợ cả chế độ online (verify + revoke check) và offline (cache local).
+
+================================================================================
+CẤU TRÚC TỔNG THỂ
+================================================================================
+
+  [CONFIG / CONSTANTS]
+       │
+       ▼
+  [Offline Helpers]  →  _sign(), _get_machine_id(), _obfuscate(), _deobfuscate()
+       │
+       ▼
+  [Cache Layer]      →  _save_cache(), _load_cache(), _clear_cache()
+       │
+       ▼
+  [Validation Layer] →  validate_offline(), validate_online(), ping_server()
+       │
+       ▼
+  [LicenseManager]   →  Class quản lý toàn bộ vòng đời license
+       │
+       ▼
+  [Singleton]        →  license_manager (instance dùng toàn app)
+
+
+================================================================================
+PHẦN 1: CÁC HẰNG SỐ & CẤU HÌNH
+================================================================================
+
+  _SECRET_KEY    = "MY_SUPER_SECRET_KEY_CHANGE_THIS_2024"
+    → Khóa bí mật dùng để tạo và xác thực chữ ký HMAC
+    → PHẢI giống với secret trong keygen.py
+
+  LICENSE_SERVER = "http://localhost:8080"
+    → URL server để verify key online
+
+  PING_INTERVAL  = 86400 (24 giờ)
+    → Khoảng thời gian giữa mỗi lần ping server kiểm tra revoke
+
+  _CACHE_FILE    = ~/.claude_browser_license
+    → File lưu license đã kích hoạt trên máy user
+
+
+================================================================================
+PHẦN 2: OFFLINE HELPERS (các hàm tiện ích)
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  _sign(payload: str) → str                                              │
+  └─────────────────────────────────────────────────────────────────────────┘
+  Mục đích : Tạo chữ ký HMAC-SHA256 từ chuỗi payload
+  Input    : payload (chuỗi dữ liệu cần ký)
+  Output   : 16 ký tự hex in hoa (checksum)
+  Luồng   :
+    payload (str)
+      → hmac.new(SECRET_KEY, payload, SHA256)
+      → lấy hexdigest()[:16]
+      → chuyển UPPER
+      → return checksum string
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  _get_machine_id() → str                                                │
+  └─────────────────────────────────────────────────────────────────────────┘
+  Mục đích : Tạo định danh duy nhất cho máy tính (stable, không đổi)
+  Input    : Không có (lấy từ hệ thống)
+  Output   : 12 ký tự hex in hoa
+  Luồng   :
+    platform.node() + platform.machine() + str(Path.home())
+      → ghép thành chuỗi raw
+      → hashlib.md5(raw)
+      → hexdigest()[:12].upper()
+      → return machine_id
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  _obfuscate(data: str) → str                                            │
+  │  _deobfuscate(data: str) → str                                          │
+  └─────────────────────────────────────────────────────────────────────────┘
+  Mục đích : Mã hóa/giải mã đơn giản (Base64) để file cache không đọc được
+             bằng mắt thường
+  _obfuscate  : str → base64.b64encode → decode UTF-8 → return
+  _deobfuscate: str → encode UTF-8 → base64.b64decode → decode → return
+
+
+================================================================================
+PHẦN 3: CACHE LAYER
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  _save_cache(key, expires_at, email)                                    │
+  └─────────────────────────────────────────────────────────────────────────┘
+  Mục đích : Lưu thông tin license đã kích hoạt xuống file local
+  Luồng   :
+    {key, expires_at, email, saved_at}
+      → json.dumps()
+      → _obfuscate()         (Base64)
+      → ghi vào _CACHE_FILE  (~/.claude_browser_license)
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  _load_cache() → dict | None                                            │
+  └─────────────────────────────────────────────────────────────────────────┘
+  Mục đích : Đọc và giải mã thông tin license từ file cache
+  Luồng   :
+    Kiểm tra _CACHE_FILE tồn tại?
+      → KHÔNG → return None
+      → CÓ → đọc file text
+              → _deobfuscate()
+              → json.loads()
+              → return dict { key, expires_at, email, saved_at }
+    Nếu có lỗi → return None
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  _clear_cache()                                                         │
+  └─────────────────────────────────────────────────────────────────────────┘
+  Mục đích : Xóa file cache (khi license hết hạn hoặc bị revoke)
+  Luồng   :
+    Kiểm tra _CACHE_FILE tồn tại?
+      → CÓ → _CACHE_FILE.unlink() (xóa file)
+
+
+================================================================================
+PHẦN 4: VALIDATION LAYER
+================================================================================
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  validate_offline(key: str) → tuple[bool, str]                         │
+  └─────────────────────────────────────────────────────────────────────────┘
+  Mục đích : Xác thực key hoàn toàn offline (không cần internet)
+             Chỉ check format, ngày hết hạn dựa vào cache local
+  Input    : key (license key string)
+  Output   : (True/False, message)
+
+  Luồng   :
+    key.upper().strip()
+      → split("-") → kiểm tra có đúng 5 nhóm không?
+          → KHÔNG → return (False, "Định dạng key không đúng")
+          → CÓ    → raw_key = 4 nhóm đầu
+                    checksum = nhóm thứ 5
+
+    _load_cache()
+      → cache KHÔNG tồn tại hoặc key không khớp
+          → return (False, "Chưa verify online lần nào")
+      → cache CÓ và key khớp
+          → Lấy expires_at từ cache
+          → So sánh với ngày hôm nay (utcnow)
+              → ĐÃ HẾT HẠN → _clear_cache() → return (False, "License đã hết hạn")
+              → CÒN HẠN    → return (True, "OK (offline cache, expires ...)")
+
+  GHI CHÚ: Offline chỉ dựa vào cache — cần verify online ít nhất 1 lần đầu
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  validate_online(key: str) → tuple[bool | None, str, dict]             │
+  └─────────────────────────────────────────────────────────────────────────┘
+  Mục đích : Gọi server để xác thực key (check signature + revoke)
+  Input    : key (license key string)
+  Output   : (valid, reason, info)
+             valid = True (hợp lệ) | False (không hợp lệ) | None (offline)
+
+  Luồng   :
+    POST {LICENSE_SERVER}/verify
+      body: { "key": key }
+      timeout: 10s
+
+    Response thành công:
+      → data["valid"] == True  → return (True, "OK", data)
+      → data["valid"] == False → return (False, data["reason"], {})
+
+    Exception:
+      → ConnectionError        → return (None, "Không kết nối được server", {})
+      → Exception khác         → return (None, str(exc), {})
+
+  ┌─────────────────────────────────────────────────────────────────────────┐
+  │  ping_server(key: str) → tuple[bool, str]                              │
+  └─────────────────────────────────────────────────────────────────────────┘
+  Mục đích : Ping định kỳ để kiểm tra key có bị revoke không
+  Input    : key (license key string)
+  Output   : (active: bool, reason: str)
+
+  Luồng   :
+    POST {LICENSE_SERVER}/ping
+      body: { "key": key }
+      timeout: 10s
+
+    Response:
+      → return (data["valid"], data["reason"])
+
+    Exception (mạng lỗi):
+      → return (True, "offline")  ← GRACE: không ping được thì cho qua
+
+
+================================================================================
+PHẦN 5: CLASS LicenseManager
+================================================================================
+
+  Là class trung tâm quản lý toàn bộ vòng đời license.
+  Được khởi tạo 1 lần duy nhất dưới dạng singleton: license_manager
+
+  Thuộc tính nội bộ:
+    _key          → license key đang dùng
+    _valid        → trạng thái hợp lệ (bool)
+    _expires      → ngày hết hạn (str YYYY-MM-DD)
+    _email        → email đăng ký
+    _ping_thread  → thread background ping server
+
+  ────────────────────────────────────────────────────────────────────────────
+  METHOD: activate(key) → tuple[bool, str]
+  ────────────────────────────────────────────────────────────────────────────
+  Mục đích : Kích hoạt license key (gọi khi user nhập key lần đầu)
+  Luồng   :
+
+    key.upper().strip()
+         │
+         ▼
+    validate_online(key)
+         │
+         ├─── valid = None (OFFLINE / no internet)
+         │         │
+         │         ▼
+         │    validate_offline(key)  ← thử dùng cache
+         │         │
+         │         ├─── OK  → set _key, _valid, _expires, _email từ cache
+         │         │          → _start_ping()
+         │         │          → return (True, "✅ License hợp lệ (offline)")
+         │         │
+         │         └─── FAIL → return (False, error_message)
+         │
+         ├─── valid = False (server từ chối)
+         │         → return (False, "❌ reason")
+         │
+         └─── valid = True (server xác nhận)
+                   → set _key, _valid, _expires, _email từ server response
+                   → _save_cache(key, expires_at, email)
+                   → _start_ping()
+                   → return (True, "✅ License hợp lệ — hết hạn ...")
+
+  ────────────────────────────────────────────────────────────────────────────
+  METHOD: is_valid() → bool
+  ────────────────────────────────────────────────────────────────────────────
+  Mục đích : Kiểm tra nhanh trạng thái license hiện tại
+  Luồng   : return self._valid  (đơn giản)
+
+  ────────────────────────────────────────────────────────────────────────────
+  METHOD: info() → dict
+  ────────────────────────────────────────────────────────────────────────────
+  Mục đích : Trả về thông tin license hiện tại
+  Output  : { key, valid, expires, email }
+
+  ────────────────────────────────────────────────────────────────────────────
+  METHOD: _start_ping()
+  ────────────────────────────────────────────────────────────────────────────
+  Mục đích : Khởi động background thread để ping server định kỳ 24h
+  Luồng   :
+    Kiểm tra _ping_thread đã chạy chưa?
+      → Đã chạy → return (không tạo thread mới)
+      → Chưa chạy → tạo daemon thread mới
+
+    Thread loop (_loop):
+      WHILE _valid == True:
+        time.sleep(86400)        ← chờ 24h
+        ping_server(_key)
+          → ok = False và reason != "offline"
+              → log warning "License bị revoke"
+              → self._valid = False
+              → _clear_cache()
+          → ok = True hoặc offline → tiếp tục vòng lặp
+
+  ────────────────────────────────────────────────────────────────────────────
+  METHOD: load_from_cache() → bool
+  ────────────────────────────────────────────────────────────────────────────
+  Mục đích : Load license từ cache khi app khởi động (tránh nhập key mỗi lần)
+  Luồng   :
+
+    _load_cache()
+         │
+         ├─── cache KHÔNG có → return False
+         │
+         └─── cache CÓ
+                   │
+                   ▼
+              Kiểm tra expires_at < hôm nay?
+                   │
+                   ├─── ĐÃ HẾT HẠN → _clear_cache() → return False
+                   │
+                   └─── CÒN HẠN
+                             │
+                             ▼
+                        ping_server(key)
+                             │
+                             ├─── ok=False và reason!="offline"
+                             │         → log "License revoked"
+                             │         → _clear_cache()
+                             │         → return False
+                             │
+                             └─── ok=True hoặc offline
+                                       → set _key, _valid, _expires, _email
+                                       → _start_ping()
+                                       → return True
+
+
+================================================================================
+LUỒNG TỔNG THỂ KHI APP KHỞI ĐỘNG
+================================================================================
+
+  App khởi động
+       │
+       ▼
+  license_manager.load_from_cache()
+       │
+       ├─── True  → License còn hạn + không bị revoke
+       │              → App chạy bình thường
+       │              → Background ping thread khởi động
+       │
+       └─── False → Hiện dialog yêu cầu nhập license key
+                       │
+                       ▼
+                  User nhập key
+                       │
+                       ▼
+                  license_manager.activate(key)
+                       │
+                       ├─── (True, msg)  → App chạy bình thường
+                       │
+                       └─── (False, msg) → Hiện thông báo lỗi, yêu cầu nhập lại
+
+
+================================================================================
+LUỒNG PING BACKGROUND (mỗi 24h)
+================================================================================
+
+  [Thread daemon] ─── chạy song song với app ────────────────────────────────
+       │
+       ▼
+  while _valid == True:
+       │
+       ├── sleep(86400)   ← chờ 24 giờ
+       │
+       ▼
+  ping_server(_key)
+       │
+       ├─── (True, ...)      → License vẫn active → tiếp tục loop
+       ├─── (True, "offline") → Không ping được → cho qua (grace period)
+       └─── (False, reason)  → License bị revoke
+                                  → _valid = False
+                                  → _clear_cache()
+                                  → Thread tự kết thúc (while exit)
+
+
+================================================================================
+TÓM TẮT CÁC TRƯỜNG HỢP XỬ LÝ
+================================================================================
+
+  TÌNH HUỐNG                │  XỬ LÝ
+  ──────────────────────────┼──────────────────────────────────────────────────
+  Lần đầu chạy app          │  Không có cache → yêu cầu nhập key
+  Nhập key + có internet    │  validate_online → lưu cache → chạy app
+  Nhập key + mất internet   │  validate_online fail → validate_offline (cache)
+  App chạy lần 2+           │  load_from_cache → ping server → chạy tiếp
+  Key hết hạn               │  expires_at check → xóa cache → yêu cầu key mới
+  Key bị revoke (online)    │  ping server → _valid=False → xóa cache
+  Server down (ping)        │  grace period → return True, "offline" → cho qua
+  File cache bị corrupt     │  except → return None → yêu cầu nhập key lại
+
+
+================================================================================
+GHI CHÚ BẢO MẬT
+================================================================================
+
+  1. _SECRET_KEY phải giữ bí mật và giống với keygen.py
+  2. Base64 (_obfuscate) chỉ là obfuscation, KHÔNG phải mã hóa mạnh
+     → Nên nâng cấp lên AES/Fernet nếu cần bảo mật cao hơn
+  3. _get_machine_id() dùng để tie key với máy (hiện chỉ dùng trong _sign,
+     chưa được nhúng vào format key của validate_offline)
+  4. Grace period khi offline có thể bị lợi dụng nếu user cố tình block server
+     → Cân nhắc thêm timeout giới hạn grace period
+
+================================================================================
+END OF ANALYSIS
+================================================================================

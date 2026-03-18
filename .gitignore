@@ -1,2 +1,6 @@
 license_/
 __pycache__/
+dist/
+build/
+.env
+data/

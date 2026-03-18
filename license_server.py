@@ -13,7 +13,7 @@ import hashlib
 import hmac
 import json
 import os
-from datetime import datetime
+from datetime import datetime,timedelta
 
 from flask import Flask, request, jsonify
 
@@ -131,7 +131,70 @@ def admin_list():
 @app.get("/health")
 def health():
     return jsonify({"status": "ok"})
+import jwt  # pip install PyJWT
+from cryptography.hazmat.primitives import serialization
 
+PRIVATE_KEY = open("private_key.pem").read()
+TOKEN_TTL_HOURS = 24
 
+@app.post("/issue-token")
+def issue_token():
+    data       = request.get_json(silent=True) or {}
+    key        = data.get("key", "")
+    machine_id = data.get("machine_id", "")
+
+    valid, reason = check_license(key)
+    if not valid:
+        return jsonify({"error": reason}), 403
+
+    db  = load_db()
+    rec = db[key.upper()]
+
+    payload = {
+        "key":        key.upper(),
+        "email":      rec["email"],
+        "expires_at": rec["expires_at"],
+        "machine_id": machine_id,          # ràng buộc với máy cụ thể
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(hours=TOKEN_TTL_HOURS),
+    }
+
+    token = jwt.encode(payload, PRIVATE_KEY, algorithm="RS256")
+    return jsonify({"token": token})
+PRIVATE_KEY = open("private_key.pem").read()
+PUBLIC_KEY  = open("public_key.pem").read()
+def _issue_token_for_key(key: str, machine_id: str) -> str:
+    db  = load_db()
+    rec = db[key.upper()]
+    payload = {
+        "key":        key.upper(),
+        "email":      rec["email"],
+        "expires_at": rec["expires_at"],
+        "machine_id": machine_id,
+        "iat": datetime.utcnow(),
+        "exp": datetime.utcnow() + timedelta(hours=TOKEN_TTL_HOURS),
+    }
+    return jwt.encode(payload, PRIVATE_KEY, algorithm="RS256")
+@app.post("/ping")
+def ping():
+    """App gọi định kỳ 24h — gửi token cũ, nhận token mới nếu còn hợp lệ"""
+    data  = request.get_json(silent=True) or {}
+    token = data.get("token", "")
+
+    try:
+        # Verify token bằng public key trên server
+        payload = jwt.decode(token, PUBLIC_KEY, algorithms=["RS256"])
+        key     = payload["key"]
+
+        valid, reason = check_license(key)
+        if not valid:
+            return jsonify({"valid": False, "reason": reason})
+
+        # Cấp token mới (gia hạn thêm 24h)
+        new_token = _issue_token_for_key(key, payload["machine_id"])
+        return jsonify({"valid": True, "token": new_token})
+
+    except jwt.InvalidTokenError:
+        return jsonify({"valid": False, "reason": "Token không hợp lệ"})
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=8080, debug=False)

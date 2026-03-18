@@ -1,63 +1,56 @@
 """
 license_validator.py  —  Nhúng vào app chính để validate license
 -----------------------------------------------------------------
-Logic:
+Flow mới (RSA JWT):
   1. Lần đầu chạy → hiện dialog nhập key
-  2. Verify offline (HMAC signature + ngày hết hạn)
-  3. Ping server online để check revoke
-  4. Lưu key vào local cache (mã hoá)
-  5. Mỗi 24h ping server 1 lần (background thread)
+  2. Gọi server /issue-token → nhận JWT token ký bằng RSA private key
+  3. Verify token bằng PUBLIC_KEY nhúng cứng trong code (offline)
+  4. Lưu token vào local cache
+  5. Mỗi 24h ping server /ping → nhận token mới nếu còn hợp lệ
 """
 
 import base64
 import hashlib
-import hmac
-import json
 import logging
 import os
 import platform
 import threading
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
+import jwt
 import requests
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# ⚠️  PHẢI GIỐNG VỚI SECRET TRONG keygen.py
-_SECRET_KEY    = "MY_SUPER_SECRET_KEY_CHANGE_THIS_2024"
+# ── Config ────────────────────────────────────────────────────────────────────
 
-# URL server của bạn sau khi deploy
-LICENSE_SERVER = "https://license-server-production-adff.up.railway.app"   # ← đổi tạm để test
-
-# Ping server mỗi bao nhiêu giây (86400 = 24h)
-PING_INTERVAL  = 86_400
-
-# File lưu license local
+LICENSE_SERVER = "https://license-server-production-adff.up.railway.app"
+PING_INTERVAL  = 86_400   # 24h
 _CACHE_FILE    = Path.home() / ".claude_browser_license"
-# ---------------------------------------------------------------------------
 
+# Public key nhúng cứng vào code — chỉ verify được, không tạo được token giả
+# Paste nội dung file public_key.pem vào đây
+PUBLIC_KEY = """-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtYRjWGP9caD8aWGJisOQ
+kzLXlNR9kda8xTxM+7z3TWpAyBOiF2VMv+7eW80efJUIKvKbJVvrdipXLWFTwI32
+yDCfYdSPyduTbSwo4uGcMUPaxuHPD4s+A8aBoD/gkaR2mT0lBUIcpir9MEsAC/mR
+xr+u2rmqwRmaJpoGpCll7ZSkVvJpXNza+19VwE7bKx+3hcYzzQ9IbsrowQubMYdQ
+8RshKLj1TzxUrIfvsZUcNU1SBx93Sq929VjkjSDJVM3WguE2g2L0GyP4969ot6WA
+wC31KyGRHUG/oEioZEaaVRXR1W5aSmgyn5e7n8hehxg6Un9r7dQf4Xh2LzE7FJl4
+7wIDAQAB
+-----END PUBLIC KEY-----"""
 
-# ── Offline helpers ──────────────────────────────────────────────────────────
-
-def _sign(payload: str) -> str:
-    return hmac.new(
-        _SECRET_KEY.encode(),
-        payload.encode(),
-        hashlib.sha256,
-    ).hexdigest()[:16].upper()
-
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _get_machine_id() -> str:
-    """Lấy ID máy tính (không thay đổi)"""
+    """ID máy tính — dùng để ràng buộc token với máy cụ thể"""
     raw = platform.node() + platform.machine() + str(Path.home())
     return hashlib.md5(raw.encode()).hexdigest()[:12].upper()
 
 
 def _obfuscate(data: str) -> str:
-    """Encode đơn giản để tránh đọc plain text trong file cache"""
     return base64.b64encode(data.encode()).decode()
 
 
@@ -65,24 +58,18 @@ def _deobfuscate(data: str) -> str:
     return base64.b64decode(data.encode()).decode()
 
 
-# ── Cache ─────────────────────────────────────────────────────────────────────
+# ── Cache — lưu JWT token ─────────────────────────────────────────────────────
 
-def _save_cache(key: str, expires_at: str, email: str):
-    payload = json.dumps({
-        "key":        key,
-        "expires_at": expires_at,
-        "email":      email,
-        "saved_at":   datetime.utcnow().isoformat(),
-    })
-    _CACHE_FILE.write_text(_obfuscate(payload))
+def _save_cache(token: str):
+    """Lưu JWT token vào file cache (obfuscated)"""
+    _CACHE_FILE.write_text(_obfuscate(token))
 
 
-def _load_cache() -> dict | None:
+def _load_cache() -> str | None:
+    """Đọc JWT token từ cache"""
     try:
         if _CACHE_FILE.exists():
-            raw  = _CACHE_FILE.read_text().strip()
-            data = json.loads(_deobfuscate(raw))
-            return data
+            return _deobfuscate(_CACHE_FILE.read_text().strip())
     except Exception:
         pass
     return None
@@ -93,125 +80,174 @@ def _clear_cache():
         _CACHE_FILE.unlink()
 
 
-# ── Offline validation ────────────────────────────────────────────────────────
+# ── Token helpers ─────────────────────────────────────────────────────────────
 
-def validate_offline(key: str) -> tuple[bool, str]:
+def verify_token_local(token: str, machine_id: str) -> tuple[bool, dict]:
     """
-    Xác thực hoàn toàn offline — chỉ check format, signature, ngày hết hạn.
-    Không check revoke (cần online để check).
-    """
-    key = key.upper().strip()
-    parts = key.split("-")
-
-    # Format: XXXXX-XXXXX-XXXXX-XXXXX-CCCC  (5 nhóm)
-    if len(parts) != 5:
-        return False, "Định dạng key không đúng (cần dạng XXXXX-XXXXX-XXXXX-XXXXX-CCCC)"
-
-    raw_key  = "-".join(parts[:4])
-    checksum = parts[4]
-
-    # Cache không lưu email → cần dùng email rỗng khi offline
-    # (email chỉ verify được khi online)
-    # Nếu muốn verify offline hoàn toàn, embed email vào key → phức tạp hơn
-    # Ở đây: offline chỉ check checksum + ngày (ngày được encode vào key)
-
-    # Lấy thông tin từ cache nếu đã verify online trước đó
-    cache = _load_cache()
-    if cache and cache.get("key") == key:
-        expires = cache.get("expires_at", "")
-        if expires < datetime.utcnow().strftime("%Y-%m-%d"):
-            _clear_cache()
-            return False, f"License đã hết hạn ngày {expires}"
-        return True, f"OK (offline cache, expires {expires})"
-
-    return False, "Chưa verify online lần nào — cần kết nối internet lần đầu"
-
-
-# ── Online validation ─────────────────────────────────────────────────────────
-
-def validate_online(key: str) -> tuple[bool, str, dict]:
-    """
-    Gọi server để verify key. Trả về (valid, reason, info)
+    Verify JWT bằng public key — hoàn toàn offline.
+    Không thể fake vì cần private key để tạo.
     """
     try:
+        payload = jwt.decode(token, PUBLIC_KEY, algorithms=["RS256"])
+        if payload.get("machine_id") != machine_id:
+            logger.warning("machine_id không khớp — token bị share hoặc giả mạo")
+            return False, {}
+        return True, payload
+    except jwt.ExpiredSignatureError:
+        logger.info("Token hết hạn 24h — cần xin token mới")
+        return False, {}
+    except jwt.InvalidTokenError as e:
+        logger.warning("Token không hợp lệ: %s", e)
+        return False, {}
+
+
+def request_token(key: str, machine_id: str) -> tuple[str | None, str]:
+    """Gọi server /issue-token để lấy JWT token mới"""
+    try:
         resp = requests.post(
-            f"{LICENSE_SERVER}/verify",
-            json={"key": key},
+            f"{LICENSE_SERVER}/issue-token",
+            json={"key": key, "machine_id": machine_id},
             timeout=10,
         )
-        data = resp.json()
+        try:
+            data = resp.json()
+        except Exception:
+            return None, f"Server lỗi (HTTP {resp.status_code})"
 
-        if data.get("valid"):
-            return True, "OK", data
-        return False, data.get("reason", "Invalid"), {}
+        if resp.status_code == 200:
+            return data.get("token"), "OK"
+        return None, data.get("error", f"Lỗi {resp.status_code}")
 
     except requests.exceptions.ConnectionError:
-        return None, "Không kết nối được server", {}  # None = offline
-    except Exception as exc:
-        return None, str(exc), {}
+        return None, "OFFLINE"
+    except requests.exceptions.Timeout:
+        return None, "OFFLINE"
+    except Exception as e:
+        return None, str(e)
 
 
-def ping_server(key: str) -> tuple[bool, str]:
-    """Ping định kỳ để check key còn active không"""
+def ping_server(token: str) -> tuple[bool, str, str | None]:
+    """
+    Ping định kỳ 24h — gửi token cũ, nhận token mới nếu còn hợp lệ.
+    Trả về (valid, reason, new_token)
+    """
     try:
         resp = requests.post(
             f"{LICENSE_SERVER}/ping",
-            json={"key": key},
+            json={"token": token},
             timeout=10,
         )
-        data = resp.json()
-        return data.get("valid", False), data.get("reason", "")
+        try:
+            data = resp.json()
+        except Exception:
+            return True, "offline", None   # parse lỗi → cho qua
+
+        valid     = data.get("valid", False)
+        reason    = data.get("reason", "")
+        new_token = data.get("token")
+        return valid, reason, new_token
+
     except Exception:
-        return True, "offline"   # nếu không ping được → cho qua (grace)
+        return True, "offline", None   # không ping được → grace period
 
 
-# ── Main validator ────────────────────────────────────────────────────────────
+# ── LicenseManager ────────────────────────────────────────────────────────────
 
 class LicenseManager:
     def __init__(self):
+        self._token:   str | None = None
         self._key:     str | None = None
         self._valid:   bool       = False
         self._expires: str | None = None
         self._email:   str | None = None
         self._ping_thread: threading.Thread | None = None
 
+    def _load_from_payload(self, payload: dict, token: str):
+        self._token   = token
+        self._key     = payload.get("key")
+        self._valid   = True
+        self._expires = payload.get("expires_at")
+        self._email   = payload.get("email")
+
     def activate(self, key: str) -> tuple[bool, str]:
-        """
-        Kích hoạt license key.
-        Thử online trước, fallback offline nếu không có internet.
-        """
-        key = key.upper().strip()
+        """Kích hoạt license key — xin JWT token từ server rồi verify local"""
+        key        = key.upper().strip()
+        machine_id = _get_machine_id()
 
-        # 1. Thử online
-        valid, reason, info = validate_online(key)
+        # 1. Xin token từ server
+        token, reason = request_token(key, machine_id)
 
-        if valid is None:
-            # Offline → fallback cache
-            logger.warning("Server không khả dụng, thử offline cache…")
-            ok, msg = validate_offline(key)
-            if ok:
-                cache = _load_cache()
-                self._key     = key
-                self._valid   = True
-                self._expires = cache["expires_at"]
-                self._email   = cache.get("email", "")
-                self._start_ping()
-                return True, f"✅ License hợp lệ (offline) — hết hạn {self._expires}"
-            return False, msg
+        if reason == "OFFLINE":
+            # Fallback: dùng token cũ trong cache nếu chưa hết hạn
+            cached_token = _load_cache()
+            if cached_token:
+                ok, payload = verify_token_local(cached_token, machine_id)
+                if ok:
+                    self._load_from_payload(payload, cached_token)
+                    self._start_ping()
+                    return True, f"✅ License hợp lệ (offline) — hết hạn {self._expires}"
+            return False, "❌ Cần kết nối internet để kích hoạt lần đầu"
 
-        if not valid:
+        if token is None:
             return False, f"❌ {reason}"
 
-        # Online success
-        self._key     = key
-        self._valid   = True
-        self._expires = info.get("expires_at")
-        self._email   = info.get("email")
+        # 2. Verify token bằng public key (offline, không gọi server nữa)
+        ok, payload = verify_token_local(token, machine_id)
+        if not ok:
+            return False, "❌ Token không hợp lệ — liên hệ hỗ trợ"
 
-        _save_cache(key, self._expires, self._email)
+        # 3. Lưu token + khởi động ping thread
+        _save_cache(token)
+        self._load_from_payload(payload, token)
         self._start_ping()
 
         return True, f"✅ License hợp lệ — hết hạn {self._expires}"
+
+    def load_from_cache(self) -> bool:
+        """Tải license từ cache khi app khởi động — tránh nhập key mỗi lần"""
+        cached_token = _load_cache()
+        if not cached_token:
+            return False
+
+        machine_id = _get_machine_id()
+
+        # Verify token local trước
+        ok, payload = verify_token_local(cached_token, machine_id)
+        if not ok:
+            # Token hết hạn 24h → ping server xin token mới
+            valid, reason, new_token = ping_server(cached_token)
+            if not valid and reason != "offline":
+                logger.warning("License revoked: %s", reason)
+                _clear_cache()
+                return False
+            if new_token:
+                ok2, payload2 = verify_token_local(new_token, machine_id)
+                if ok2:
+                    _save_cache(new_token)
+                    self._load_from_payload(payload2, new_token)
+                    self._start_ping()
+                    return True
+            _clear_cache()
+            return False
+
+        # Token còn hạn → ping server check revoke
+        valid, reason, new_token = ping_server(cached_token)
+        if not valid and reason != "offline":
+            logger.warning("License revoked: %s", reason)
+            _clear_cache()
+            return False
+
+        # Cập nhật token mới nếu server trả về
+        if new_token:
+            ok2, payload2 = verify_token_local(new_token, machine_id)
+            if ok2:
+                _save_cache(new_token)
+                payload  = payload2
+                cached_token = new_token
+
+        self._load_from_payload(payload, cached_token)
+        self._start_ping()
+        return True
 
     def is_valid(self) -> bool:
         return self._valid
@@ -232,41 +268,24 @@ class LicenseManager:
         def _loop():
             while self._valid:
                 time.sleep(PING_INTERVAL)
-                ok, reason = ping_server(self._key)
-                if not ok:
-                    logger.warning("License bị revoke từ server: %s", reason)
+                if not self._token:
+                    break
+                valid, reason, new_token = ping_server(self._token)
+                if not valid and reason != "offline":
+                    logger.warning("License bị revoke: %s", reason)
                     self._valid = False
                     _clear_cache()
+                    break
+                if new_token:
+                    machine_id = _get_machine_id()
+                    ok, payload = verify_token_local(new_token, machine_id)
+                    if ok:
+                        _save_cache(new_token)
+                        self._token   = new_token
+                        self._expires = payload.get("expires_at")
 
         self._ping_thread = threading.Thread(target=_loop, daemon=True)
         self._ping_thread.start()
-
-    def load_from_cache(self) -> bool:
-        """Tải license từ cache khi app khởi động (tránh nhập key mỗi lần)"""
-        cache = _load_cache()
-        if not cache:
-            return False
-
-        key     = cache.get("key", "")
-        expires = cache.get("expires_at", "")
-
-        if expires < datetime.utcnow().strftime("%Y-%m-%d"):
-            _clear_cache()
-            return False
-
-        # Ping server để check revoke
-        ok, reason = ping_server(key)
-        if not ok and reason != "offline":
-            logger.warning("License revoked: %s", reason)
-            _clear_cache()
-            return False
-
-        self._key     = key
-        self._valid   = True
-        self._expires = expires
-        self._email   = cache.get("email")
-        self._start_ping()
-        return True
 
 
 # Singleton

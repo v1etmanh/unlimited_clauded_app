@@ -7,7 +7,7 @@ Khi khởi động:
   3. Key hợp lệ → chạy Flask server
   4. Key sai → thoát
 """
-
+from app_config import FIREFOX_PROFILE, FLASK_PORT
 import logging
 import sys
 import tkinter as tk
@@ -180,24 +180,44 @@ def check_license() -> bool:
 
 
 if __name__ == "__main__":
+    import app_config
+    app_config.ensure_defaults_saved()
+    from setup_screen import run_setup_screen
+    if not run_setup_screen():
+        sys.exit(0)
     # ── Bước 1: Kiểm tra license ─────────────────────────────
     if not check_license():
         logger.critical("License không hợp lệ. Thoát.")
         sys.exit(1)
 
     logger.info("License hợp lệ ✓ — Khởi động server…")
+    
 
     # ── Bước 2: Init Claude client (từ app.py) ────────────────
-    if not init_client():
+    from loading_screen import run_with_loading
+    if not run_with_loading(
+        init_client,
+        title   = "Đang kết nối Claude",
+        message = "Đang lấy session Firefox và tạo chat...",
+        status  = "Mở Firefox profile...",
+    ):
         logger.critical("Claude client lỗi.")
+        messagebox.showerror(
+            "Lỗi khởi động",
+            "Không thể kết nối Claude.\nKiểm tra Firefox profile và thử lại.",
+        )
         sys.exit(1)
+
+    # ── Bước 2: Init Claude client (từ app.py) ────────────────
+    
+    
 
     # ── Bước 3: Chạy Flask trong background thread ───────────
     import threading
     flask_thread = threading.Thread(
         target=lambda: app.run(
             host="0.0.0.0",
-            port=5000,
+            port=FLASK_PORT,
             debug=False,
             threaded=True,
         ),

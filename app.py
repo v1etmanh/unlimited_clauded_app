@@ -46,20 +46,17 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Config  ← chỉnh ở đây
 # ---------------------------------------------------------------------------
-FIREFOX_PROFILE = (
-    r"C:\Users\Admin\AppData\Roaming\Mozilla\Firefox\Profiles\RHVILscw.Profile 1"
-)
-
+import app_config
 MODEL_ID = "claude-via-browser"
 
 # Giảm từ 240s → 60s; nếu Claude không trả lời trong 60s coi như lỗi
-CLIENT_TIMEOUT = 240
+CLIENT_TIMEOUT = app_config.CLIENT_TIMEOUT
 
 # Chỉ giữ N messages cuối cùng trước khi gửi (tránh prompt quá dài)
-MAX_HISTORY_MESSAGES = 10
+MAX_HISTORY_MESSAGES = app_config.MAX_HISTORY_MESSAGES
 
 # Số lần retry khi chat_id bị stale
-MAX_RETRIES = 2
+MAX_RETRIES = app_config.MAX_RETRIES
 
 # ---------------------------------------------------------------------------
 # App & global state
@@ -78,7 +75,7 @@ def init_client() -> bool:
     global session, client, persistent_chat_id
     try:
         logger.info("Initialising Claude session…")
-        session = get_session_data(profile=FIREFOX_PROFILE)
+        session = get_session_data(profile=app_config.FIREFOX_PROFILE)
         client = ClaudeAPIClient(session, timeout=CLIENT_TIMEOUT)
         logger.info("Claude client ready ✓")
 

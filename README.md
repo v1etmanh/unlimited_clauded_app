@@ -101,7 +101,7 @@ ko bt cách tạo và chỉ khi có token ms chạy dc
 pip install pyinstaller
 
 # Đóng gói
-pyinstaller --onefile --noconsole --name "ClaudeBrowser" app_with_license.py
+pyinstaller --onefile --noconsole --name "unlimited_claude_api" app_with_license.py
 
 # File .exe nằm ở: dist/ClaudeBrowser.exe
 ```
@@ -147,3 +147,4 @@ Verify online (server)
 
 > 💡 Không có hệ thống nào bảo mật 100% nếu user có .exe. 
 > Mục tiêu là làm khó crack đủ để không đáng công crack.
+build file này trên nhiều hệ điều hành để tạo ra các file khác nhau chạy dc trên nhiều hệ điều hành khác nhau

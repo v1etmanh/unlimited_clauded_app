@@ -26,8 +26,7 @@ jobs:
       run: |
         pyinstaller --onefile --windowed \
           --name "MyApp" \
-          --add-data "templates:templates" \
-          --add-data "static:static" \
+          
           --hidden-import flask \
           --hidden-import werkzeug \
           app.py

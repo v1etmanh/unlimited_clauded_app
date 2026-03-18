@@ -3,7 +3,7 @@ name: Build macOS App
 on:
   push:
     branches: [master]
-  workflow_dispatch:  # Cho phép chạy thủ công
+  workflow_dispatch:
 
 jobs:
   build-macos:
@@ -24,12 +24,11 @@ jobs:
     
     - name: Build with PyInstaller
       run: |
-        pyinstaller --onefile --windowed \
+        pyinstaller --onedir --windowed \
           --name "MyApp" \
-          
           --hidden-import flask \
           --hidden-import werkzeug \
-          app.py
+          app_with_license.py
     
     - name: Zip the .app
       run: |

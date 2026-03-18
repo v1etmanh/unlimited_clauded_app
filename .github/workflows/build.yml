@@ -1,0 +1,44 @@
+name: Build macOS App
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:  # Cho phép chạy thủ công
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install pyinstaller flask
+        pip install -r requirements.txt
+    
+    - name: Build with PyInstaller
+      run: |
+        pyinstaller --onefile --windowed \
+          --name "MyApp" \
+          --add-data "templates:templates" \
+          --add-data "static:static" \
+          --hidden-import flask \
+          --hidden-import werkzeug \
+          app.py
+    
+    - name: Zip the .app
+      run: |
+        cd dist
+        zip -r MyApp-macOS.zip MyApp.app
+    
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: MyApp-macOS
+        path: dist/MyApp-macOS.zip

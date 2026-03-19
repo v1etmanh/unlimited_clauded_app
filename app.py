@@ -18,6 +18,7 @@ Endpoints:
 Run:
     python app.py
 """
+from license_validator import license_manager
 from api_logger import log_request
 from dashboard import Dashboard
 import time
@@ -223,6 +224,12 @@ def list_models():
 @app.post("/v1/chat/completions")
 @require_client
 def chat_completions():
+    if not license_manager.is_valid():
+        return openai_error(
+            "License không hợp lệ hoặc chưa được kích hoạt.",
+            code="license_error",
+            status=403,
+        )
     _start = time.time()
     body: dict = request.get_json(silent=True) or {}
 

@@ -1,4 +1,4 @@
-name: Build Linux App
+name: Build macOS App
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-linux:
-    runs-on: ubuntu-latest
+  build-macos:
+    runs-on: macos-latest
     
     steps:
     - uses: actions/checkout@v4
@@ -16,11 +16,6 @@ jobs:
       uses: actions/setup-python@v4
       with:
         python-version: '3.11'
-    
-    - name: Install system dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y python3-tk tk-dev
     
     - name: Install Python dependencies
       run: |
@@ -47,10 +42,10 @@ jobs:
     - name: Zip binary
       run: |
         cd dist
-        zip -r unlimited_claude_api-linux.zip unlimited_claude_api
+        zip -r unlimited_claude_api-macos.zip unlimited_claude_api
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: unlimited_claude_api-linux
-        path: dist/unlimited_claude_api-linux.zip
+        name: unlimited_claude_api-macos
+        path: dist/unlimited_claude_api-macos.zip

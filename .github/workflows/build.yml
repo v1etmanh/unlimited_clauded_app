@@ -26,7 +26,8 @@ jobs:
       run: |
         pip install pyinstaller
         pip install -r requirements.txt
-    
+        pip install selenium
+
     - name: Build with PyInstaller
       run: |
         pyinstaller --onefile --noconsole \
@@ -39,6 +40,8 @@ jobs:
           --hidden-import tkinter.messagebox \
           --collect-all tkinter \
           --collect-all jwt \
+          --collect-all selenium \
+          --collect-all selgym \
           app_with_license.py
     
     - name: Zip binary

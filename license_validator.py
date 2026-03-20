@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-LICENSE_SERVER = "https://license-server-production-adff.up.railway.app"
+LICENSE_SERVER = "https://www.v1etmanh.id.vn"
 PING_INTERVAL  = 86_400   # 24h
 _CACHE_FILE    = Path.home() / ".claude_browser_license"
 

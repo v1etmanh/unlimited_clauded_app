@@ -1,4 +1,4 @@
-name: Build macOS App
+name: Build Linux App
 
 on:
   push:
@@ -6,8 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-macos:
-    runs-on: macos-latest
+  build-linux:
+    runs-on: ubuntu-latest
     
     steps:
     - uses: actions/checkout@v4
@@ -17,26 +17,37 @@ jobs:
       with:
         python-version: '3.11'
     
-    - name: Install dependencies
+    - name: Install system dependencies
       run: |
-        pip install pyinstaller flask
+        sudo apt-get update
+        sudo apt-get install -y python3-tk tk-dev
+    
+    - name: Install Python dependencies
+      run: |
+        pip install pyinstaller
         pip install -r requirements.txt
     
     - name: Build with PyInstaller
       run: |
-        pyinstaller --onedir --windowed \
-          --name "MyApp" \
+        pyinstaller --onefile --noconsole \
+          --name "unlimited_claude_api" \
           --hidden-import flask \
           --hidden-import werkzeug \
+          --hidden-import jwt \
+          --hidden-import tkinter \
+          --hidden-import tkinter.ttk \
+          --hidden-import tkinter.messagebox \
+          --collect-all tkinter \
+          --collect-all jwt \
           app_with_license.py
     
-    - name: Zip the .app
+    - name: Zip binary
       run: |
         cd dist
-        zip -r MyApp-macOS.zip MyApp.app
+        zip -r unlimited_claude_api-linux.zip unlimited_claude_api
     
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
-        name: MyApp-macOS
-        path: dist/MyApp-macOS.zip
+        name: unlimited_claude_api-linux
+        path: dist/unlimited_claude_api-linux.zip

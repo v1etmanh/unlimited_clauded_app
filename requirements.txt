@@ -3,3 +3,4 @@ requests
 PyJWT
 unofficial-claude-api
 cryptography
+selenium

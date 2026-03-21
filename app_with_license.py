@@ -7,7 +7,8 @@ Khi khởi động:
   3. Key hợp lệ → chạy Flask server
   4. Key sai → thoát
 """
-from app_config import FIREFOX_PROFILE, FLASK_PORT
+import app_config
+from app_config import FIREFOX_PROFILE
 import logging
 import sys
 import tkinter as tk
@@ -217,7 +218,7 @@ if __name__ == "__main__":
     flask_thread = threading.Thread(
         target=lambda: app.run(
             host="0.0.0.0",
-            port=FLASK_PORT,
+            port=app_config.FLASK_PORT,
             debug=False,
             threaded=True,
         ),

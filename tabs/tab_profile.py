@@ -288,6 +288,35 @@ class ProfileTab(tk.Frame):
 
         conn_inner.columnconfigure(1, weight=1)
 
+        # ── Refresh Client ────────────────────────────────────────────────────
+        refresh_card = card(p)
+        refresh_card.pack(fill="x", **pad, pady=8)
+        refresh_inner = tk.Frame(refresh_card, bg=C["surface0"], padx=24, pady=20)
+        refresh_inner.pack(fill="x")
+
+        lbl(refresh_inner, "🔄  Kết nối Claude", 10, bold=True,
+            color=C["blue"], bg=C["surface0"]).pack(anchor="w", pady=(0, 10))
+
+        status_row = tk.Frame(refresh_inner, bg=C["surface0"])
+        status_row.pack(fill="x", pady=(0, 10))
+
+        lbl(status_row, "Trạng thái:", 9, color=C["subtext"],
+            bg=C["surface0"]).pack(side="left")
+        self._conn_status_var = tk.StringVar(value="—")
+        self._conn_status_lbl = tk.Label(
+            status_row,
+            textvariable=self._conn_status_var,
+            font=("Segoe UI", 9),
+            bg=C["surface0"], fg=C["overlay"],
+        )
+        self._conn_status_lbl.pack(side="left", padx=(8, 0))
+
+        self._refresh_btn = btn(
+            refresh_inner, "🔄  Refresh Client",
+            self._do_refresh_client, width=20,
+        )
+        self._refresh_btn.pack(anchor="w")
+
         # ── Save / Reset buttons ──────────────────────────────────────────────
         btn_row = tk.Frame(p, bg=C["base"])
         btn_row.pack(fill="x", **pad, pady=20)
@@ -387,6 +416,34 @@ class ProfileTab(tk.Frame):
             "⚠️ Firefox Profile và Flask Port\n"
             "có hiệu lực lần khởi động tiếp theo."
         )
+
+    def _do_refresh_client(self):
+        import threading
+        try:
+            from app import init_client
+        except ImportError:
+            self._conn_status_var.set("❌ Không thể import init_client")
+            self._conn_status_lbl.config(fg=C["red"])
+            return
+
+        self._refresh_btn.config(state="disabled")
+        self._conn_status_var.set("⏳ Đang kết nối lại...")
+        self._conn_status_lbl.config(fg=C["yellow"])
+        self.update_idletasks()
+
+        def _run():
+            ok = init_client()
+            def _update():
+                if ok:
+                    self._conn_status_var.set("✅ Kết nối thành công")
+                    self._conn_status_lbl.config(fg=C["green"])
+                else:
+                    self._conn_status_var.set("❌ Kết nối thất bại")
+                    self._conn_status_lbl.config(fg=C["red"])
+                self._refresh_btn.config(state="normal")
+            self.after(0, _update)
+
+        threading.Thread(target=_run, daemon=True).start()
 
     def _reset(self):
         if messagebox.askyesno("Đặt lại", "Xoá toàn bộ thông tin đã nhập?"):

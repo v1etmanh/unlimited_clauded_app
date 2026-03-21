@@ -68,13 +68,28 @@ session: SessionData | None = None
 client: ClaudeAPIClient | None = None
 persistent_chat_id: str | None = None   # ← reuse 1 chat duy nhất
 
+import threading
+_client_lock = threading.Lock()  # bảo vệ init_client() khỏi race condition
+
 
 # ---------------------------------------------------------------------------
 # Init
 # ---------------------------------------------------------------------------
 def init_client() -> bool:
     global session, client, persistent_chat_id
+    if not _client_lock.acquire(blocking=False):
+        logger.warning("init_client() đang chạy ở thread khác, bỏ qua.")
+        return False
     try:
+        # Cleanup chat cũ trước khi tạo mới
+        if client is not None and persistent_chat_id is not None:
+            try:
+                client.delete_chat(persistent_chat_id)
+                logger.info("Old chat deleted  id=%s", persistent_chat_id)
+            except Exception:
+                pass
+            persistent_chat_id = None
+
         logger.info("Initialising Claude session…")
         session = get_session_data(profile=app_config.FIREFOX_PROFILE)
         client = ClaudeAPIClient(session, timeout=CLIENT_TIMEOUT)
@@ -92,6 +107,8 @@ def init_client() -> bool:
     except Exception as exc:
         logger.error("Failed to initialise Claude client: %s", exc)
         return False
+    finally:
+        _client_lock.release()
 
 
 def refresh_chat() -> bool:

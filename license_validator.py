@@ -88,7 +88,8 @@ def verify_token_local(token: str, machine_id: str) -> tuple[bool, dict]:
     Không thể fake vì cần private key để tạo.
     """
     try:
-        payload = jwt.decode(token, PUBLIC_KEY, algorithms=["RS256"])
+        
+        payload = jwt.decode(token, PUBLIC_KEY, algorithms=["RS256"],options={"verify_iat": False} )
         if payload.get("machine_id") != machine_id:
             logger.warning("machine_id không khớp — token bị share hoặc giả mạo")
             return False, {}

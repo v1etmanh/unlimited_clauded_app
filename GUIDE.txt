@@ -1,0 +1,84 @@
+🚀 CLAUDE-VIA-BROWSER: HƯỚNG DẪN THIẾT LẬP CHI TIẾT (BẢN EXE)
+===========================================================
+
+LƯU Ý: Vui lòng thực hiện tuần tự các bước dưới đây để đảm bảo tool hoạt động ổn định nhất.
+
+---
+
+### BƯỚC 1: CÀI ĐẶT GECKODRIVER (TRÌNH ĐIỀU KHIỂN)
+Tool cần thành phần này để có thể điều khiển trình duyệt Firefox.
+
+1. Truy cập: https://github.com/mozilla/geckodriver/releases
+2. Tìm và tải bản: geckodriver-vX.XX.X-win64.zip (thay X bằng phiên bản mới nhất).
+3. Giải nén và copy file 'geckodriver.exe' vào cùng thư mục chứa file tool của bạn  có thể thêm vào path hoặc cho vào system32
+
+
+✅ KIỂM TRA (TEST):
+   - Mở CMD tại thư mục chứa tool.
+   - Gõ lệnh: geckodriver --version
+   - Nếu hiện ra thông tin phiên bản (vd: geckodriver 0.34.0) là OK.
+
+---
+
+### BƯỚC 2: TẠO FIREFOX PROFILE MỚI (QUAN TRỌNG)
+Việc tạo Profile riêng giúp tool chạy biệt lập, không bị ảnh hưởng bởi dữ liệu cá nhân hay tiện ích mở rộng khác.
+
+1. Đóng hoàn toàn trình duyệt Firefox đang mở.
+2. Nhấn tổ hợp phím 'Windows + R', gõ: firefox.exe -P rồi nhấn Enter.
+3. Trong cửa sổ hiện ra, chọn 'Create Profile' -> Nhấn Next.
+4. Đặt tên Profile là: ClaudeTool -> Nhấn Finish.
+5. Chọn Profile 'ClaudeTool' và nhấn 'Start Firefox'.
+6. Tại trình duyệt mới mở, truy cập 'https://claude.ai' và ĐĂNG NHẬP tài khoản của bạn.
+7. Gõ 'about:profiles' vào thanh địa chỉ.
+8. Tìm đến Profile 'ClaudeTool', copy toàn bộ đường dẫn tại dòng 'Root Directory'.
+
+---
+
+### BƯỚC 3: CẤU HÌNH TOOL
+1.chạy ứng dụng dán .toàn bộ đường dẫn đã được copy vào FIREFOX_PROFILE  ....
+ảnh
+2. xác minh port hiện tại đã bị chiếm chưa : port mặc định là 5000 ,
+chọn port thích hợp và test nếu đảm bảo thì ok 
+ảnh
+3. lưu và chạy ứng dụng
+ảnh
+---
+
+### BƯỚC 4: KÍCH HOẠT LICENSE & KHỞI CHẠY
+2. Nếu là lần đầu, một cửa sổ yêu cầu License Key sẽ hiện ra -> Dán Key của bạn vào.
+ảnh
+3. Chờ tool khởi tạo session trình duyệt.
+
+✅ KIỂM TRA (TEST):
+   - Nếu thấy dòng thông báo "Claude client ready ✓" và "Persistent chat created" trong cửa sổ lệnh là thành công.
+
+---
+
+### BƯỚC 5: KẾT NỐI VÀ SỬ DỤNG
+Bạn có thể dùng tool này như một API OpenAI cục bộ:
+- Base URL: http://localhost:5000/v1
+- Model ID: claude-via-browser
+- API Key: (Điền bất kỳ ký tự nào)
+
+
+### bước 6 optional
+tải extension continue 
+ảnh
+mở add model
+ảnh
+mở config file
+ảnh
+
+thực hiện dán config này vào
+ảnh
+✅ KIỂM TRA (TEST):
+   gõ hello  kết quả
+
+---
+
+⚠️ LƯU Ý CHUNG:
+- Không đóng cửa sổ Firefox mà tool tự động mở lên khi đang sử dụng.
+- License được ràng buộc theo máy (Machine ID), không chia sẻ Key cho máy khác.
+- khi bạn hết token ở 1 nick hãy đăng nhập và thực hiện việc reconnect
+ảnh
+- Mọi thắc mắc liên hệ: https://www.v1etmanh.id.vn

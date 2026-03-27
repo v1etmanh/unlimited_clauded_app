@@ -34,6 +34,7 @@ from claude_api.client import ClaudeAPIClient, SendMessageResponse
 from claude_api.session import SessionData, get_session_data
 from claude_api.errors import ClaudeAPIError, MessageRateLimitError, OverloadError
 
+
 # ---------------------------------------------------------------------------
 # Logging
 # ---------------------------------------------------------------------------
@@ -92,7 +93,7 @@ def init_client() -> bool:
 
         logger.info("Initialising Claude session…")
         session = get_session_data(profile=app_config.FIREFOX_PROFILE)
-        client = ClaudeAPIClient(session, timeout=CLIENT_TIMEOUT)
+        client = ClaudeAPIClient(  session, model_name=app_config.MODEL,    timeout=CLIENT_TIMEOUT    )
         logger.info("Claude client ready ✓")
 
         # Tạo 1 chat persistent ngay lúc khởi động

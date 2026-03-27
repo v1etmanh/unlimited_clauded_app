@@ -5,3 +5,5 @@ build/
 .env
 data/
 .aider*
+guide/
+.vscode/

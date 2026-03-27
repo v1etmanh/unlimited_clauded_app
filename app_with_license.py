@@ -18,9 +18,6 @@ from tkinter import messagebox
 # Import license validator
 from license_validator import license_manager
 
-# Import app gốc (Flask server của bạn)
-# from claude_api.client import ClaudeAPIClient  ← giữ nguyên import cũ
-
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(message)s",
@@ -45,17 +42,15 @@ class LicenseDialog:
 
     def _center_window(self):
         self.root.update_idletasks()
-        w = self.root.winfo_width()
-        h = self.root.winfo_height()
         x = (self.root.winfo_screenwidth()  // 2) - (480 // 2)
         y = (self.root.winfo_screenheight() // 2) - (260 // 2)
         self.root.geometry(f"480x260+{x}+{y}")
 
     def _build_ui(self):
-        bg   = "#1e1e2e"
-        fg   = "#cdd6f4"
-        btn  = "#89b4fa"
-        inp  = "#313244"
+        bg  = "#1e1e2e"
+        fg  = "#cdd6f4"
+        btn = "#89b4fa"
+        inp = "#313244"
 
         tk.Label(
             self.root, text="🔐 Claude via Browser",
@@ -69,7 +64,6 @@ class LicenseDialog:
             bg=bg, fg="#a6adc8",
         ).pack(pady=(0, 20))
 
-        # Key input
         frame = tk.Frame(self.root, bg=bg)
         frame.pack(padx=40, fill="x")
 
@@ -88,7 +82,6 @@ class LicenseDialog:
         self.entry.bind("<FocusIn>",  lambda e: self._clear_placeholder())
         self.entry.bind("<Return>",   lambda e: self._submit())
 
-        # Status label
         self.status_var = tk.StringVar(value="")
         self.status_lbl = tk.Label(
             self.root,
@@ -98,7 +91,6 @@ class LicenseDialog:
         )
         self.status_lbl.pack(pady=8)
 
-        # Buttons
         btn_frame = tk.Frame(self.root, bg=bg)
         btn_frame.pack()
 
@@ -158,7 +150,6 @@ def check_license() -> bool:
     Kiểm tra license trước khi chạy app.
     Returns True nếu hợp lệ, False nếu không.
     """
-    # 1. Thử load từ cache (user đã kích hoạt rồi)
     if license_manager.load_from_cache():
         info = license_manager.info()
         logger.info(
@@ -167,39 +158,36 @@ def check_license() -> bool:
         )
         return True
 
-    # 2. Chưa có cache → hiện dialog nhập key
     logger.info("Chưa có license, hiện dialog kích hoạt…")
     dialog = LicenseDialog()
     return dialog.show()
-## setup profile 
-## co 1 giao dien de set up profile 
-## 1 giao dien de thong ke lich su api dc goi
-### 1 giao dien de the hien thoi gian con lai
-## 1 giao dien tk ca nhan
+
 
 # ── Main ──────────────────────────────────────────────────────────────────────
-
 
 if __name__ == "__main__":
     import app_config
     app_config.ensure_defaults_saved()
+
     from setup_screen import run_setup_screen
     if not run_setup_screen():
         sys.exit(0)
+
     # ── Bước 1: Kiểm tra license ─────────────────────────────
     if not check_license():
         logger.critical("License không hợp lệ. Thoát.")
         sys.exit(1)
 
     logger.info("License hợp lệ ✓ — Khởi động server…")
-    
 
-    # ── Bước 2: Init Claude client (từ app.py) ────────────────
+    # ── Bước 2: Init Claude client — truyền model đã chọn ────
+    # app_config.reload() đã được gọi bên trong setup_screen,
+    # nên app_config.MODEL lúc này đã phản ánh lựa chọn của user.
     from loading_screen import run_with_loading
     if not run_with_loading(
-        init_client,
+        lambda: init_client(),   # ← truyền model
         title   = "Đang kết nối Claude",
-        message = "Đang lấy session Firefox và tạo chat...",
+        message = f"Model: {app_config.MODEL}",
         status  = "Mở Firefox profile...",
     ):
         logger.critical("Claude client lỗi.")
@@ -208,10 +196,6 @@ if __name__ == "__main__":
             "Không thể kết nối Claude.\nKiểm tra Firefox profile và thử lại.",
         )
         sys.exit(1)
-
-    # ── Bước 2: Init Claude client (từ app.py) ────────────────
-    
-    
 
     # ── Bước 3: Chạy Flask trong background thread ───────────
     import threading

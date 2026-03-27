@@ -1,0 +1,364 @@
+================================================================
+  APPLICATION ANALYSIS: Claude via Browser
+  Analyzed: 2026-03-23
+================================================================
+
+================================================================
+1. TONG QUAN (OVERVIEW)
+================================================================
+
+Ten ung dung : Claude via Browser — OpenAI-Compatible Local API
+Muc dich     : Bien Claude (chay tren trinh duyet Firefox) thanh
+               1 local API server tuong thich voi OpenAI format.
+               Nguoi dung co the dung bat ki tool ho tro OpenAI API
+               (Cursor, Obsidian, v.v.) ma KHONG can tra phi API.
+Ngon ngu     : Python 3.10+
+UI framework : Tkinter (dark theme Catppuccin Mocha)
+Backend      : Flask (REST API)
+Browser      : Firefox (qua claude_api library)
+Bao mat      : License system (HMAC-SHA256 + cloud server)
+
+
+================================================================
+2. KIEN TRUC HE THONG (ARCHITECTURE)
+================================================================
+
++----------------------------------------------------------+
+|                      USER'S MACHINE                      |
+|                                                          |
+|  +-----------------+      +---------------------------+  |
+|  |  GUI (Tkinter)  |      |   Flask API (app.py)      |  |
+|  |  app_with_      |<---->|   POST /v1/chat/          |  |
+|  |  license.py     |      |        completions        |  |
+|  |  dashboard.py   |      |   GET  /v1/models         |  |
+|  |  setup_screen   |      |   GET  /health            |  |
+|  |  loading_screen |      +-------------+-------------+  |
+|  +-----------------+                    |                 |
+|                                         v                 |
+|                         +-----------------------------+   |
+|                         |  claude_api library         |   |
+|                         |  (ClaudeAPIClient)          |   |
+|                         |  Dung Firefox profile de    |   |
+|                         |  dieu khien Claude web      |   |
+|                         +-----------------------------+   |
+|                                         |                 |
+|                         +-----------------------------+   |
+|                         |  Firefox Browser            |   |
+|                         |  (Profile logged into       |   |
+|                         |   claude.ai)                |   |
+|                         +-----------------------------+   |
++----------------------------------------------------------+
+                                  |
+                          Internet|
+                                  v
+                     +------------------------+
+                     |  License Server        |
+                     |  (Railway / Render)    |
+                     |  license_server.py     |
+                     |  - Verify key          |
+                     |  - Check revoke        |
+                     |  - Ping health         |
+                     +------------------------+
+
+
+================================================================
+3. CAU TRUC FILE (FILE STRUCTURE)
+================================================================
+
+Root/
+ |
+ +-- app.py                  [CORE] Flask API server chinh
+ |                            - POST /v1/chat/completions
+ |                            - Reuse 1 persistent chat
+ |                            - Streaming + non-streaming
+ |                            - Auto-retry khi chat stale
+ |
+ +-- app_config.py           [CONFIG] Quan ly cau hinh
+ |                            - Doc/ghi data/user_profile.json
+ |                            - FIREFOX_PROFILE, FLASK_PORT,
+ |                              CLIENT_TIMEOUT, MAX_HISTORY,
+ |                              MAX_RETRIES
+ |
+ +-- app_with_license.py     [ENTRY POINT] App chinh (co license)
+ |                            - Kiem tra license truoc khi chay
+ |                            - Khoi dong Flask + Dashboard
+ |
+ +-- dashboard.py            [UI] Cua so chinh sau khi login
+ |                            - Tkinter, 1100x700
+ |                            - Sidebar trai + Content phai
+ |                            - 4 tabs: Profile, History, License, Account
+ |
+ +-- tabs/
+ |    +-- tab_profile.py     [TAB] Hien thi thong tin user
+ |    +-- tab_api_history.py [TAB] Log lich su API calls
+ |    +-- tab_license.py     [TAB] Thong tin license
+ |    +-- tab_account.py     [TAB] Quan ly tai khoan + logout
+ |
+ +-- theme.py                [UI] Mau Catppuccin Mocha (dark)
+ |                            - Constants mau: C["base"], C["blue"], ...
+ |
+ +-- license_validator.py    [SECURITY] Kiem tra license phia client
+ |                            - Verify online qua license server
+ |                            - Fallback offline (cache)
+ |                            - Background ping 24h/lan
+ |
+ +-- license_server.py       [SERVER] Deploy len cloud
+ |                            - Flask server
+ |                            - Quan ly licenses.json
+ |                            - Endpoint verify + revoke
+ |
+ +-- keygen.py               [ADMIN TOOL] Tao/quan ly key
+ |                            - --email + --days -> tao key moi
+ |                            - --list  -> xem tat ca key
+ |                            - --revoke -> thu hoi key
+ |
+ +-- api_logger.py           [LOGGING] Ghi log API calls
+ |                            - Luu vao data/api_log.json
+ |                            - Status, latency, tokens
+ |
+ +-- loading_screen.py       [UI] Man hinh loading khi khoi dong
+ +-- setup_screen.py         [UI] Man hinh setup lan dau
+ +-- gen_keys.py             [UTIL] Helper tao key
+ +-- requirements.txt        [DEPS] Dependencies Python
+ +-- GUIDE.txt               [DOCS] Huong dan su dung
+ +-- HOW_TO_INTEGRATE.py     [DOCS] Huong dan tich hop
+
+
+================================================================
+4. LUONG HOAT DONG (FLOW)
+================================================================
+
+--- Khoi dong ---
+
+[User chay app_with_license.exe]
+          |
+          v
+[Loading screen hien ra]
+          |
+          v
+[Kiem tra license cache]
+     |           |
+   CO           KHONG
+     |           |
+     v           v
+[Ping server  [Hien dialog
+ check revoke] nhap key]
+     |           |
+   OK          [Verify online]
+     |           |
+     v           v
+[app_config.ensure_defaults_saved()]
+          |
+          v
+[Kiem tra FIREFOX_PROFILE != null]
+     |           |
+   CO           KHONG
+     |           v
+     |    [Hien setup screen
+     |     nhap Firefox profile path]
+     v
+[init_client()]
+  - get_session_data(profile)
+  - ClaudeAPIClient(session)
+  - client.create_chat() -> persistent_chat_id
+          |
+          v
+[Flask app.run() tren thread rieng]
+[Dashboard.run() tren main thread]
+
+
+--- Xu ly API request ---
+
+[POST /v1/chat/completions]
+          |
+          v
+[Kiem tra license_manager.is_valid()]
+          |
+          v
+[messages_to_prompt(messages)]
+  - Giu system msg
+  - Trim xuong MAX_HISTORY_MESSAGES cuoi
+  - Flatten thanh 1 string
+          |
+          v
+[client.send_message(persistent_chat_id, prompt)]
+          |
+     +---------+
+     |         |
+   OK        ERROR / EMPTY
+     |         |
+     v         v
+[Tra ve   [refresh_chat() -> retry]
+ response]  Max MAX_RETRIES lan
+     |
+  stream?
+  |      |
+YES      NO
+  |      |
+[SSE   [JSON
+ chunks] response]
+
+
+================================================================
+5. HE THONG LICNESE (LICENSE SYSTEM)
+================================================================
+
+Kieu bao mat: Asymmetric-like (server tao token, client chi validate)
+
+Luong:
+  1. Admin tao key: keygen.py --email x --days 30
+     -> Key format: XXXXX-XXXXX-XXXXX-XXXXX-CCCC
+     -> Luu vao licenses.json (tren server)
+     -> HMAC-SHA256 signature voi SECRET_KEY
+
+  2. User nhap key vao app
+     -> App gui key len license_server.py
+     -> Server tra ve token + expiry info
+     -> App luu cache (Base64 obfuscated)
+
+  3. Moi 24h: background thread ping server
+     -> Kiem tra key co bi revoke khong
+     -> Neu bi revoke: thoat app
+
+  4. Offline fallback:
+     -> Neu khong co internet: dung cache cu
+     -> Cache co local date check
+
+Ban do bao mat:
+  Attack               | Defense
+  ---------------------|----------------------------
+  Share key            | 24h revoke check
+  Fake key             | HMAC-SHA256 signature
+  Tamper cache         | Base64 obfuscation
+  Use after expiry     | Server + local date check
+  Bypass completely    | PyInstaller obfuscation
+
+
+================================================================
+6. CAU HINH (CONFIGURATION)
+================================================================
+
+File: data/user_profile.json (tu dong tao)
+
+  Key                  | Default | Mo ta
+  ---------------------|---------|---------------------------
+  firefox_profile      | ""      | Duong dan Firefox profile
+  flask_port           | 5000    | Port cho API server
+  client_timeout       | 240     | Timeout (giay) cho Claude
+  max_history_messages | 10      | So tin nhan giu lai
+  max_retries          | 2       | So lan retry khi loi
+
+Chinh sua qua UI:
+  - FIREFOX_PROFILE: man hinh chinh (bat buoc, neu null khong chay)
+  - CLIENT_TIMEOUT, MAX_HISTORY, MAX_RETRIES: tab Profile
+
+
+================================================================
+7. API ENDPOINTS
+================================================================
+
+  Method | Path                    | Mo ta
+  -------|-------------------------|---------------------------
+  GET    | /health                 | Kiem tra trang thai server
+  GET    | /v1/models              | Danh sach model
+  POST   | /v1/chat/completions    | Gui tin nhan (stream/non)
+
+Request body (chat completions):
+  {
+    "model": "claude-via-browser",
+    "messages": [
+      {"role": "system",    "content": "..."},
+      {"role": "user",      "content": "..."},
+      {"role": "assistant", "content": "..."}
+    ],
+    "stream": false
+  }
+
+Response: OpenAI-compatible format
+  {
+    "id": "chatcmpl-...",
+    "object": "chat.completion",
+    "choices": [{"message": {"role": "assistant", "content": "..."}}]
+  }
+
+
+================================================================
+8. UI TABS
+================================================================
+
+[Profile Tab]
+  - Hien thi thong tin license (email, key, expiry)
+  - Chinh FIREFOX_PROFILE path
+  - Nut Connect / Disconnect
+
+[API History Tab]
+  - Bang log cac API call gan nhat
+  - Columns: timestamp, status, latency, tokens_in, tokens_out
+  - Auto-refresh khi switch tab
+
+[License Tab]
+  - Thong tin chi tiet license
+  - Ngay het han, trang thai
+
+[Account Tab]
+  - Thong tin tai khoan
+  - Nut Logout (destroy window + goi on_logout callback)
+
+
+================================================================
+9. DEPENDENCIES
+================================================================
+
+  Package         | Muc dich
+  ----------------|-------------------------------------------
+  flask           | REST API server
+  tkinter         | GUI (built-in Python)
+  claude_api      | Dieu khien Claude qua Firefox
+  requests        | HTTP calls toi license server
+  pyinstaller     | Dong goi .exe
+  hmac / hashlib  | Ma hoa key
+  threading       | Background ping + Flask thread
+  json / pathlib  | Config, logging
+
+
+================================================================
+10. DEPLOYMENT
+================================================================
+
+Development:
+  python app_with_license.py
+
+Build .exe:
+  pyinstaller --onefile --noconsole \
+    --name "unlimited_claude_api" app_with_license.py
+  -> Output: dist/unlimited_claude_api.exe
+
+License Server (Railway/Render):
+  - Deploy: license_server.py + licenses.json
+  - Env var: PORT=8080
+  - Update LICENSE_SERVER url trong license_validator.py
+
+Multi-OS Build:
+  - Windows : pyinstaller tren Windows -> .exe
+  - macOS   : pyinstaller tren macOS   -> .app / binary
+  - Linux   : pyinstaller tren Linux   -> ELF binary
+  (Moi OS phai build rieng tren OS do)
+
+
+================================================================
+11. PENDING IMPROVEMENTS (tu README)
+================================================================
+
+[ ] Connect button tren man hinh chinh (thay vi tu dong connect)
+[ ] Setup screen cho FIREFOX_PROFILE khi null
+[ ] Validate FIREFOX_PROFILE truoc khi cho chay
+[ ] Tab Profile: chinh CLIENT_TIMEOUT, MAX_HISTORY, MAX_RETRIES
+[ ] Token-based auth (2-way asymmetric):
+    - User gui key -> server tao session token
+    - Client chi validate token, khong the tao
+    - Chi chay duoc khi co token hop le
+[ ] Build cho nhieu OS (Windows, macOS, Linux)
+
+================================================================
+  END OF ANALYSIS
+================================================================

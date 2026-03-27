@@ -5,21 +5,33 @@ Màn hình Setup — hiện MỌI LẦN khởi động (trước License check).
 - Nếu port OK  → nút Skip khả dụng
 - Nếu port lỗi → bắt buộc nhập port mới trước khi tiếp tục
 - Cho phép đổi Firefox profile bất kỳ lúc nào
+- Cho phép chọn hoặc nhập tên model tùy ý               ← MỚI
 """
 import json
 import os
 import socket
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, ttk
 from app_config import (
     FIREFOX_PROFILE,
     CLIENT_TIMEOUT,
     MAX_HISTORY_MESSAGES,
     MAX_RETRIES,
-    FLASK_PORT
+    FLASK_PORT,
+    MODEL,                  # ← MỚI
 )
+
 _PROFILE_FILE = Path(__file__).parent / "data" / "user_profile.json"
+
+# Danh sách model gợi ý hiện trên combobox
+_SUGGESTED_MODELS = [
+    "claude-sonnet-4-5","claude-sonnet-4-6",
+                  "claude-opus-4-5",
+                "claude-haiku-4-5",
+               "claude-sonnet-4-5-20251001"
+        
+]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -69,33 +81,33 @@ class SetupScreen:
     BTN = "#45475a"
 
     def __init__(self):
-        
-        
         self.result = False
         self._cfg   = _load_cfg()
 
     # ── Tạo root TRƯỚC, rồi mới tạo Variables ──
         self.root = tk.Tk()
         self.root.title("Khởi động — Kiểm tra cấu hình")
-        self.root.geometry("520x370")
+        self.root.geometry("520x440")          # cao hơn 70px để chứa model row
         self.root.resizable(False, False)
         self.root.configure(bg=self.BG)
 
     # IntVar / StringVar phải sau tk.Tk()
-        self._port_var    = tk.IntVar(value=self._cfg.get("flask_port",FLASK_PORT ))
+        self._port_var    = tk.IntVar(value=self._cfg.get("flask_port", FLASK_PORT))
         self._profile_var = tk.StringVar(value=self._cfg.get("firefox_profile", FIREFOX_PROFILE))
+        self._model_var   = tk.StringVar(value=self._cfg.get("model", MODEL))  # ← MỚI
         self._port_ok     = False
 
         self._center()
         self._build()
         self.root.after(200, self._auto_check)
+
     # ── Layout ────────────────────────────────────────────────────────────────
 
     def _center(self):
         self.root.update_idletasks()
         x = (self.root.winfo_screenwidth()  - 520) // 2
-        y = (self.root.winfo_screenheight() - 370) // 2
-        self.root.geometry(f"520x370+{x}+{y}")
+        y = (self.root.winfo_screenheight() - 440) // 2
+        self.root.geometry(f"520x440+{x}+{y}")
 
     def _label(self, parent, text, size=10, bold=False, color=None, anchor="w"):
         return tk.Label(
@@ -108,7 +120,7 @@ class SetupScreen:
         # ── Header ────────────────────────────────────────────────────────────
         self._label(self.root, "⚙  Kiểm tra cấu hình khởi động",
                     size=14, bold=True, anchor="center").pack(pady=(22, 3))
-        self._label(self.root, "Xác nhận port và Firefox profile trước khi chạy",
+        self._label(self.root, "Xác nhận port, model và Firefox profile trước khi chạy",
                     color=self.SUB, anchor="center").pack(pady=(0, 18))
 
         body = tk.Frame(self.root, bg=self.BG)
@@ -129,7 +141,7 @@ class SetupScreen:
             bg=self.INP, fg=self.FG,
             insertbackground=self.FG,
             relief="flat", bd=4, width=8,
-            command=self._on_port_change,   # khi bấm mũi tên spinbox
+            command=self._on_port_change,
         )
         self._port_entry.pack(side="left")
         self._port_entry.bind("<KeyRelease>", lambda e: self._on_port_change())
@@ -142,26 +154,64 @@ class SetupScreen:
             command=self._check_port,
         ).pack(side="left", padx=(10, 0))
 
-        # Badge trạng thái port
         self._port_badge = tk.Label(
             port_row, text="", font=("Segoe UI", 9, "bold"),
             bg=self.BG, fg=self.OK, anchor="w",
         )
         self._port_badge.pack(side="left", padx=(10, 0))
 
-        # Dòng mô tả lỗi port
         self._port_hint = tk.Label(
             body, text="", font=("Segoe UI", 8),
             bg=self.BG, fg=self.ERR, anchor="w",
         )
-        self._port_hint.grid(row=2, column=0, sticky="w", pady=(0, 14))
+        self._port_hint.grid(row=2, column=0, sticky="w", pady=(0, 12))
+
+        # ── MODEL ─────────────────────────────────────────────────────────────
+        self._label(body, "Model", bold=True).grid(
+            row=3, column=0, sticky="w", pady=(0, 4))
+
+        model_row = tk.Frame(body, bg=self.BG)
+        model_row.grid(row=4, column=0, sticky="ew", pady=(0, 4))
+        model_row.columnconfigure(0, weight=1)
+
+        # Style cho ttk.Combobox khớp màu dark theme
+        style = ttk.Style(self.root)
+        style.theme_use("default")
+        style.configure(
+            "Dark.TCombobox",
+            fieldbackground=self.INP,
+            background=self.BTN,
+            foreground=self.FG,
+            arrowcolor=self.FG,
+            borderwidth=0,
+            relief="flat",
+        )
+        style.map("Dark.TCombobox",
+                  fieldbackground=[("readonly", self.INP)],
+                  selectbackground=[("readonly", self.INP)],
+                  selectforeground=[("readonly", self.FG)])
+
+        self._model_combo = ttk.Combobox(
+            model_row,
+            textvariable=self._model_var,
+            values=_SUGGESTED_MODELS,
+            font=("Consolas", 10),
+            style="Dark.TCombobox",
+            state="normal",           # "normal" = vừa chọn vừa nhập tự do
+        )
+        self._model_combo.grid(row=0, column=0, sticky="ew", ipady=4)
+
+        self._label(body,
+                    "Chọn từ danh sách hoặc nhập tên model tùy ý",
+                    size=8, color="#585b70").grid(
+            row=5, column=0, sticky="w", pady=(2, 12))
 
         # ── FIREFOX PROFILE ───────────────────────────────────────────────────
         self._label(body, "Firefox profile", bold=True).grid(
-            row=3, column=0, sticky="w", pady=(0, 4))
+            row=6, column=0, sticky="w", pady=(0, 4))
 
         prof_row = tk.Frame(body, bg=self.BG)
-        prof_row.grid(row=4, column=0, sticky="ew", pady=(0, 4))
+        prof_row.grid(row=7, column=0, sticky="ew", pady=(0, 4))
         prof_row.columnconfigure(0, weight=1)
 
         tk.Entry(
@@ -184,11 +234,11 @@ class SetupScreen:
         self._label(body,
                     f"Thường ở: {default_path}",
                     size=8, color="#585b70").grid(
-            row=5, column=0, sticky="w", pady=(2, 0))
+            row=8, column=0, sticky="w", pady=(2, 0))
 
         # ── Buttons ───────────────────────────────────────────────────────────
         btn_frame = tk.Frame(self.root, bg=self.BG)
-        btn_frame.pack(pady=22)
+        btn_frame.pack(pady=20)
 
         self._skip_btn = tk.Button(
             btn_frame, text="Skip — tiếp tục",
@@ -196,7 +246,7 @@ class SetupScreen:
             bg=self.ACC, fg="#1e1e2e",
             relief="flat", padx=18, pady=7, cursor="hand2",
             command=self._skip,
-            state="disabled",         # disabled cho đến khi port OK
+            state="disabled",
         )
         self._skip_btn.pack(side="left", padx=6)
 
@@ -219,11 +269,9 @@ class SetupScreen:
     # ── Logic ─────────────────────────────────────────────────────────────────
 
     def _auto_check(self):
-        """Tự kiểm tra port ngay khi màn hình vừa mở."""
         self._check_port(silent=True)
 
     def _on_port_change(self):
-        """Reset trạng thái khi user thay đổi port."""
         self._port_ok = False
         self._port_badge.config(text="", fg=self.OK)
         self._port_hint.config(text="")
@@ -252,7 +300,6 @@ class SetupScreen:
         self._port_ok = ok
         self._port_badge.config(text=badge, fg=self.OK if ok else self.ERR)
         self._port_hint.config(text=hint)
-        # Skip chỉ khả dụng khi port OK
         self._skip_btn.config(state="normal" if ok else "disabled")
 
     def _browse(self):
@@ -276,35 +323,46 @@ class SetupScreen:
             )
         return True
 
-    def _skip(self):
-        """Port OK, không cần lưu — dùng config hiện tại."""
-        if not self._validate_profile():
-            return
-        # Vẫn lưu profile nếu user vừa đổi, nhưng giữ port cũ
-        _save_cfg({
+    def _validate_model(self) -> bool:
+        """Kiểm tra model không được để trống."""
+        model = self._model_var.get().strip()
+        if not model:
+            messagebox.showwarning("Thiếu thông tin", "Vui lòng chọn hoặc nhập tên model.")
+            return False
+        return True
+
+    def _collect_cfg(self) -> dict:
+        return {
             "firefox_profile": self._profile_var.get().strip(),
             "flask_port":      self._port_var.get(),
-        })
+            "model":           self._model_var.get().strip(),   # ← MỚI
+        }
+
+    def _skip(self):
+        """Port OK, không cần lưu — dùng config hiện tại."""
+        if not self._validate_model():
+            return
+        if not self._validate_profile():
+            return
+        _save_cfg(self._collect_cfg())
         import app_config
         app_config.reload()
         self.result = True
         self.root.destroy()
 
     def _save_and_continue(self):
-        """Lưu port + profile mới rồi tiếp tục."""
+        """Lưu port + model + profile mới rồi tiếp tục."""
         if not self._port_ok:
             messagebox.showwarning(
                 "Port chưa kiểm tra",
                 "Vui lòng bấm 'Kiểm tra port' để xác nhận port khả dụng.",
             )
             return
+        if not self._validate_model():
+            return
         if not self._validate_profile():
             return
-
-        _save_cfg({
-            "flask_port":      self._port_var.get(),
-            "firefox_profile": self._profile_var.get().strip(),
-        })
+        _save_cfg(self._collect_cfg())
         import app_config
         app_config.reload()
         self.result = True

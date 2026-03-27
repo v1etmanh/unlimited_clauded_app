@@ -11,6 +11,7 @@ _DEFAULTS = {
     "client_timeout":       240,
     "max_history_messages": 10,
     "max_retries":          2,
+    "model":                "claude-sonnet-4-5",   # ← MỚI
 }
 
 
@@ -32,18 +33,20 @@ FLASK_PORT           = _cfg["flask_port"]
 CLIENT_TIMEOUT       = _cfg["client_timeout"]
 MAX_HISTORY_MESSAGES = _cfg["max_history_messages"]
 MAX_RETRIES          = _cfg["max_retries"]
+MODEL                = _cfg["model"]              # ← MỚI
 
 
 def reload():
     """Gọi sau khi user lưu setting mới — cập nhật global vars"""
     global FIREFOX_PROFILE, FLASK_PORT, CLIENT_TIMEOUT
-    global MAX_HISTORY_MESSAGES, MAX_RETRIES
+    global MAX_HISTORY_MESSAGES, MAX_RETRIES, MODEL
     cfg = _load()
     FIREFOX_PROFILE      = cfg["firefox_profile"]
     FLASK_PORT           = cfg["flask_port"]
     CLIENT_TIMEOUT       = cfg["client_timeout"]
     MAX_HISTORY_MESSAGES = cfg["max_history_messages"]
     MAX_RETRIES          = cfg["max_retries"]
+    MODEL                = cfg["model"]           # ← MỚI
 
 
 def ensure_defaults_saved():
